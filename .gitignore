@@ -1,0 +1,6 @@
+# System files
+node_modules
+.DS_Store
+
+# User Data (DO NOT UPLOAD)
+license_db.json

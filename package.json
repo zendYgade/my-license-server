@@ -1,0 +1,13 @@
+{
+    "name": "flingster-license-server",
+    "version": "1.0.0",
+    "description": "Simple license server for Flingster extension",
+    "main": "license_server.js",
+    "scripts": {
+        "start": "node license_server.js"
+    },
+    "dependencies": {},
+    "engines": {
+        "node": ">=14.x"
+    }
+}
