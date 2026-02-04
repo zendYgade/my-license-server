@@ -1,33 +1,30 @@
 const http = require('http');
-const fs = require('fs');
+const mongoose = require('mongoose');
 
 const PORT = process.env.PORT || 3000;
-const DB_FILE = process.env.DB_PATH || 'license_db.json';
+const MONGO_URI = process.env.MONGO_URI; // Connection String from Atlas
 
-// Simple "Database" loaded from file
-let db = {
-    keys: {
-        "KEY-1234-5678": { used: false, deviceId: null },
-        "BUYER-BOB-001": { used: false, deviceId: null },
-        "DEMO-123": { used: false, deviceId: null }
-    }
-};
-
-// Load DB if exists
-if (fs.existsSync(DB_FILE)) {
-    try {
-        db = JSON.parse(fs.readFileSync(DB_FILE));
-    } catch (e) {
-        console.error("Failed to load DB, starting fresh.");
-    }
+// 1. Connect to MongoDB
+if (MONGO_URI) {
+    mongoose.connect(MONGO_URI)
+        .then(() => console.log("Connected to MongoDB Atlas"))
+        .catch(err => console.error("MongoDB Connection Error:", err));
+} else {
+    console.warn("WARNING: No MONGO_URI found. Server will fail.");
 }
 
-function saveDb() {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-}
+// 2. Define Schema
+const LicenseSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    used: { type: Boolean, default: false },
+    deviceId: { type: String, default: null }
+});
 
-const server = http.createServer((req, res) => {
-    // Enable CORS
+const License = mongoose.model('License', LicenseSchema);
+
+// 3. Server Logic
+const server = http.createServer(async (req, res) => {
+    // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -41,12 +38,13 @@ const server = http.createServer((req, res) => {
     if (req.url === '/verify' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
-        req.on('end', () => {
+        req.on('end', async () => {
             try {
                 const { key, deviceId } = JSON.parse(body);
-                const license = db.keys[key];
+                console.log(`Verifying: ${key} (Device: ${deviceId})`);
 
-                console.log(`Verifying: ${key} from Device: ${deviceId}`);
+                // Find License in DB
+                const license = await License.findOne({ key: key });
 
                 if (!license) {
                     res.writeHead(200);
@@ -55,28 +53,29 @@ const server = http.createServer((req, res) => {
                 }
 
                 if (!license.used) {
-                    // First time use! Lock it.
+                    // First usage -> Lock it
                     license.used = true;
                     license.deviceId = deviceId;
-                    saveDb();
+                    await license.save();
+
                     res.writeHead(200);
                     res.end(JSON.stringify({ valid: true, message: "Activated!" }));
-                    console.log(`-> Key ${key} LOCKED to ${deviceId}`);
+                    console.log(`-> Locked ${key} to ${deviceId}`);
                 } else {
-                    // Already used. Check device ID.
+                    // Check Lock
                     if (license.deviceId === deviceId) {
                         res.writeHead(200);
                         res.end(JSON.stringify({ valid: true, message: "Welcome back!" }));
-                        console.log(`-> Re-activation allowed for same device.`);
                     } else {
                         res.writeHead(200);
-                        res.end(JSON.stringify({ valid: false, message: "Key already used on another device." }));
-                        console.log(`-> BLOCKED attempt from different device.`);
+                        res.end(JSON.stringify({ valid: false, message: "Key used on another device." }));
+                        console.log(`-> Blocked reuse attempt.`);
                     }
                 }
             } catch (e) {
+                console.error(e);
                 res.writeHead(400);
-                res.end(JSON.stringify({ error: "Invalid Request" }));
+                res.end(JSON.stringify({ error: "Server Error" }));
             }
         });
     } else {
@@ -86,6 +85,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`License Server (Device Locked) running at http://localhost:${PORT}`);
-    saveDb(); // Ensure DB file is created
+    console.log(`Cloud License Server running on port ${PORT}`);
 });

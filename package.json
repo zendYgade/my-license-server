@@ -1,12 +1,14 @@
 {
     "name": "flingster-license-server",
-    "version": "1.0.0",
-    "description": "Simple license server for Flingster extension",
+    "version": "1.1.0",
+    "description": "License server with MongoDB support",
     "main": "license_server.js",
     "scripts": {
         "start": "node license_server.js"
     },
-    "dependencies": {},
+    "dependencies": {
+        "mongoose": "^8.0.0"
+    },
     "engines": {
         "node": ">=14.x"
     }

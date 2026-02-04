@@ -1,25 +1,38 @@
-const fs = require('fs');
-const readline = require('readline');
+const mongoose = require('mongoose');
 
-const DB_FILE = 'license_db.json';
+// --- CONFIG ---
+// Paste your Atlas Connection String here for local admin work
+// OR set it in your terminal: $env:MONGO_URI="mongodb+srv..."
+const MONGO_URI = process.env.MONGO_URI || "PASTE_YOUR_CONNECTION_STRING_HERE";
 
-// Initialize DB if missing
-let db = { keys: {} };
-if (fs.existsSync(DB_FILE)) {
-    try {
-        db = JSON.parse(fs.readFileSync(DB_FILE));
-    } catch (e) {
-        console.error("Error reading database.");
-    }
+if (MONGO_URI.includes("PASTE_YOUR")) {
+    console.error("\n[ERROR] You need to set your MongoDB Connection String inside manage_keys.js (Line 5) first!\n");
+    process.exit(1);
 }
 
-function saveDb() {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-}
+// Connect
+mongoose.connect(MONGO_URI).then(() => {
+    // console.log("Connected to Cloud DB");
+}).catch(err => {
+    console.error("DB Connection Failed:", err);
+    process.exit(1);
+});
+
+// Schema (Must match server)
+const LicenseSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    used: { type: Boolean, default: false },
+    deviceId: { type: String, default: null }
+});
+const License = mongoose.model('License', LicenseSchema);
+
+
+// --- LOGIC ---
+const args = process.argv.slice(2);
+const command = args[0];
 
 function generateKey() {
-    // Generate format: PRE-XXXX-XXXX-XXXX
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No O, 0, I, 1
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let result = '';
     for (let i = 0; i < 12; i++) {
         if (i > 0 && i % 4 === 0) result += '-';
@@ -28,50 +41,51 @@ function generateKey() {
     return 'LIC-' + result;
 }
 
-const args = process.argv.slice(2);
-const command = args[0];
+async function run() {
+    if (command === 'list') {
+        console.log("\n___ CLOUD LICENSE KEYS ___");
+        console.log(String("KEY").padEnd(25) + " | " + String("STATUS").padEnd(10) + " | " + "DEVICE");
+        console.log("-".repeat(60));
 
-// CLI LOGIC
-if (command === 'list') {
-    console.log("\n___ LICENSE KEYS ___");
-    console.log(String("KEY").padEnd(25) + " | " + String("STATUS").padEnd(10) + " | " + "DEVICE");
-    console.log("-".repeat(60));
+        const licenses = await License.find({});
+        if (licenses.length === 0) console.log("(No keys found)");
 
-    for (const [key, data] of Object.entries(db.keys)) {
-        const status = data.used ? "USED" : "NEW";
-        const device = data.deviceId ? data.deviceId : "(none)";
-        console.log(`${key.padEnd(25)} | ${status.padEnd(10)} | ${device}`);
-    }
-    console.log("\n");
+        for (const data of licenses) {
+            const status = data.used ? "USED" : "NEW";
+            const device = data.deviceId ? data.deviceId : "(none)";
+            console.log(`${data.key.padEnd(25)} | ${status.padEnd(10)} | ${device}`);
+        }
+        console.log("\n");
 
-} else if (command === 'create') {
-    const count = parseInt(args[1]) || 1;
-    console.log(`\nGenerating ${count} new key(s)...`);
+    } else if (command === 'create') {
+        const count = parseInt(args[1]) || 1;
+        console.log(`\nGenerating ${count} new key(s) in Cloud...`);
 
-    for (let i = 0; i < count; i++) {
-        const newKey = generateKey();
-        db.keys[newKey] = { used: false, deviceId: null };
-        console.log(`-> Created: ${newKey}`);
-    }
-    saveDb();
-    console.log("Database updated.\n");
+        for (let i = 0; i < count; i++) {
+            const newKey = generateKey();
+            await License.create({ key: newKey });
+            console.log(`-> Created: ${newKey}`);
+        }
+        console.log("Done.\n");
 
-} else if (command === 'reset') {
-    const key = args[1];
-    if (db.keys[key]) {
-        db.keys[key].used = false;
-        db.keys[key].deviceId = null;
-        saveDb();
-        console.log(`\n[SUCCESS] Key ${key} has been RESET. It can be used again on a new device.\n`);
+    } else if (command === 'reset') {
+        const key = args[1];
+        const res = await License.updateOne({ key: key }, { used: false, deviceId: null });
+
+        if (res.matchedCount > 0) {
+            console.log(`\n[SUCCESS] Key ${key} reset in Cloud DB.\n`);
+        } else {
+            console.log(`\n[ERROR] Key not found.\n`);
+        }
     } else {
-        console.log(`\n[ERROR] Key ${key} not found.\n`);
+        console.log("\n--- Cloud Admin Tool ---");
+        console.log("Usage:");
+        console.log("  node manage_keys.js list             Show all keys");
+        console.log("  node manage_keys.js create [num]     Generate new keys");
+        console.log("  node manage_keys.js reset [key]      Unlock a key");
     }
 
-} else {
-    console.log("\n--- License Admin Tool ---");
-    console.log("Usage:");
-    console.log("  node manage_keys.js list             Show all keys");
-    console.log("  node manage_keys.js create [num]     Generate new keys (default 1)");
-    console.log("  node manage_keys.js reset [key]      Unlock a key (allow new device)");
-    console.log("\n");
+    mongoose.disconnect();
 }
+
+run();
