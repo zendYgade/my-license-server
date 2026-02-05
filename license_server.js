@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https'); // For Gumroad API
 const mongoose = require('mongoose');
 
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,38 @@ const LicenseSchema = new mongoose.Schema({
 const License = mongoose.model('License', LicenseSchema);
 
 // 3. Server Logic
+const GUMROAD_PRODUCT_ID = 'alS-wte7nQtY-mrObxcL8w=='; // User's Product Permalink
+
+async function verifyGumroad(key) {
+    return new Promise((resolve) => {
+        const req = https.request('https://api.gumroad.com/v2/licenses/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    // Gumroad returns { success: true, purchase: { ... } }
+                    resolve(json.success === true && !json.purchase.refunded);
+                } catch (e) {
+                    console.error("Gumroad Parse Error", e);
+                    resolve(false);
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            console.error("Gumroad Request Error", e);
+            resolve(false);
+        });
+
+        req.write(`product_permalink=${encodeURIComponent(GUMROAD_PRODUCT_ID)}&license_key=${encodeURIComponent(key)}`);
+        req.end();
+    });
+}
+
 const server = http.createServer(async (req, res) => {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -43,15 +76,31 @@ const server = http.createServer(async (req, res) => {
                 const { key, deviceId } = JSON.parse(body);
                 console.log(`Verifying: ${key} (Device: ${deviceId})`);
 
-                // Find License in DB
-                const license = await License.findOne({ key: key });
+                // A. Check Local Database Cache
+                let license = await License.findOne({ key: key });
 
+                // B. If not in DB, Check Gumroad API
                 if (!license) {
-                    res.writeHead(200);
-                    res.end(JSON.stringify({ valid: false, message: "Invalid Key" }));
-                    return;
+                    console.log(`Key not in DB, checking Gumroad...`);
+                    const isValidGumroad = await verifyGumroad(key);
+
+                    if (isValidGumroad) {
+                        console.log("Gumroad Validated! Caching to DB...");
+                        // Create valid license entry in our DB
+                        license = new License({
+                            key: key,
+                            used: false, // Not used yet (will be used below)
+                            deviceId: null
+                        });
+                        await license.save();
+                    } else {
+                        res.writeHead(200);
+                        res.end(JSON.stringify({ valid: false, message: "Invalid Key (Gumroad Rejected)" }));
+                        return;
+                    }
                 }
 
+                // C. Validation Logic (Standard)
                 if (!license.used) {
                     // First usage -> Lock it
                     license.used = true;

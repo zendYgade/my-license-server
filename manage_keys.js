@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 // --- CONFIG ---
 // Paste your Atlas Connection String here for local admin work
 // OR set it in your terminal: $env:MONGO_URI="mongodb+srv..."
-const MONGO_URI = process.env.MONGO_URI || "PASTE_YOUR_CONNECTION_STRING_HERE";
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://admin:tvGH0U0w5YPYRrmz@cluster0.6qowums.mongodb.net/?appName=Cluster0";
 
 if (MONGO_URI.includes("PASTE_YOUR")) {
     console.error("\n[ERROR] You need to set your MongoDB Connection String inside manage_keys.js (Line 5) first!\n");
@@ -11,7 +11,9 @@ if (MONGO_URI.includes("PASTE_YOUR")) {
 }
 
 // Connect
-mongoose.connect(MONGO_URI).then(() => {
+mongoose.connect(MONGO_URI, {
+    family: 4 // Force IPv4 (Fixes DNS ECONNREFUSED)
+}).then(() => {
     // console.log("Connected to Cloud DB");
 }).catch(err => {
     console.error("DB Connection Failed:", err);
