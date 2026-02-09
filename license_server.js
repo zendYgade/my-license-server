@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI; // Connection String from Atlas
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "admin123"; // CHANGE THIS IN RENDER ENV VARS!
 
 // 1. Connect to MongoDB
 if (MONGO_URI) {
@@ -18,7 +19,8 @@ if (MONGO_URI) {
 const LicenseSchema = new mongoose.Schema({
     key: { type: String, required: true, unique: true },
     used: { type: Boolean, default: false },
-    deviceId: { type: String, default: null }
+    deviceId: { type: String, default: null },
+    banned: { type: Boolean, default: false } // NEW: Kill Switch
 });
 
 const License = mongoose.model('License', LicenseSchema);
@@ -68,11 +70,14 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    if (req.url === '/verify' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', async () => {
-            try {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+        try {
+            const path = req.url;
+
+            // --- VERIFY ENDPOINT ---
+            if (path === '/verify' && req.method === 'POST') {
                 const { key, deviceId } = JSON.parse(body);
                 console.log(`Verifying: ${key} (Device: ${deviceId})`);
 
@@ -90,7 +95,8 @@ const server = http.createServer(async (req, res) => {
                         license = new License({
                             key: key,
                             used: false, // Not used yet (will be used below)
-                            deviceId: null
+                            deviceId: null,
+                            banned: false
                         });
                         await license.save();
                     } else {
@@ -98,6 +104,14 @@ const server = http.createServer(async (req, res) => {
                         res.end(JSON.stringify({ valid: false, message: "Invalid Key (Gumroad Rejected)" }));
                         return;
                     }
+                }
+
+                // --- KILL SWITCH CHECK ---
+                if (license.banned) {
+                    console.log(`-> REJECTED BANNED USER: ${key}`);
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ valid: false, banned: true, message: "License Suspended due to misuse." }));
+                    return;
                 }
 
                 // C. Validation Logic (Standard)
@@ -121,18 +135,44 @@ const server = http.createServer(async (req, res) => {
                         console.log(`-> Blocked reuse attempt.`);
                     }
                 }
-            } catch (e) {
-                console.error(e);
-                res.writeHead(400);
-                res.end(JSON.stringify({ error: "Server Error" }));
             }
-        });
-    } else {
-        res.writeHead(404);
-        res.end("Not Found");
-    }
+
+            // --- ADMIN BAN ENDPOINT ---
+            else if (path === '/admin/ban' && req.method === 'POST') {
+                const { adminKey, targetKey } = JSON.parse(body);
+                if (adminKey !== ADMIN_SECRET) {
+                    res.writeHead(403);
+                    res.end(JSON.stringify({ error: "Unauthorized" }));
+                    return;
+                }
+
+                const license = await License.findOne({ key: targetKey });
+                if (license) {
+                    license.banned = true;
+                    await license.save();
+                    console.log(`[ADMIN] Banned User: ${targetKey}`);
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ success: true, message: `User ${targetKey} has been BANNED.` }));
+                } else {
+                    res.writeHead(404);
+                    res.end(JSON.stringify({ success: false, message: "User not found." }));
+                }
+            }
+
+            else {
+                res.writeHead(404);
+                res.end("Not Found");
+            }
+
+        } catch (e) {
+            console.error(e);
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: "Server Error" }));
+        }
+    });
 });
 
 server.listen(PORT, () => {
     console.log(`Cloud License Server running on port ${PORT}`);
 });
+
