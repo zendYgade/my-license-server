@@ -146,17 +146,16 @@ const server = http.createServer(async (req, res) => {
                     return;
                 }
 
-                const license = await License.findOne({ key: targetKey });
-                if (license) {
-                    license.banned = true;
-                    await license.save();
-                    console.log(`[ADMIN] Banned User: ${targetKey}`);
-                    res.writeHead(200);
-                    res.end(JSON.stringify({ success: true, message: `User ${targetKey} has been BANNED.` }));
-                } else {
-                    res.writeHead(404);
-                    res.end(JSON.stringify({ success: false, message: "User not found." }));
-                }
+                // UPSERT: Create the ban entry even if usage doesn't exist yet (Pre-Ban)
+                const license = await License.findOneAndUpdate(
+                    { key: targetKey },
+                    { $set: { banned: true, key: targetKey } }, // Ensure key is set on creation
+                    { new: true, upsert: true }
+                );
+
+                console.log(`[ADMIN] Banned User: ${targetKey}`);
+                res.writeHead(200);
+                res.end(JSON.stringify({ success: true, message: `User ${targetKey} has been BANNED (Pre-ban or Existing).` }));
             }
 
             else {
